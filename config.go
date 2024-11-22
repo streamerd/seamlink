@@ -12,19 +12,16 @@ type SeamlinkClick struct {
 
 // SeamlinkConfig middleware configuration
 type SeamlinkConfig struct {
-	// Function to store link clicks (e.g., to database)
 	StoreLinkClick func(click SeamlinkClick) error
-	// Optional: domains to exclude from tracking
+	StorePageVisit func(visit PageVisit) error // New callback for page visits
 	ExcludeDomains []string
 }
 
-// DefaultConfig returns the default Seamlink configuration
+// DefaultConfig returns default configuration
 func DefaultConfig() SeamlinkConfig {
 	return SeamlinkConfig{
-		StoreLinkClick: func(click SeamlinkClick) error {
-			// Default implementation: log to console
-			return nil
-		},
+		StoreLinkClick: func(click SeamlinkClick) error { return nil },
+		StorePageVisit: func(visit PageVisit) error { return nil },
 		ExcludeDomains: []string{},
 	}
 }

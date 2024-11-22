@@ -4,9 +4,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
+
+// PageVisit tracks initial page visits
+type PageVisit struct {
+	URL       string    `json:"url"`
+	Referrer  string    `json:"referrer"`
+	UserAgent string    `json:"userAgent"`
+	Timestamp time.Time `json:"timestamp"`
+}
 
 func New(config ...SeamlinkConfig) fiber.Handler {
 	fmt.Println("Seamlink middleware initialized")
@@ -20,12 +29,25 @@ func New(config ...SeamlinkConfig) fiber.Handler {
 	<script>
 	console.log('Seamlink tracking script loaded');
 	
+	// Track page visit when loaded
+	fetch('/api/seamlink/pageview', {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+		},
+		body: JSON.stringify({
+			url: window.location.href,
+			referrer: document.referrer || 'direct',
+			userAgent: navigator.userAgent,
+			timestamp: new Date().toISOString()
+		})
+	});
+	
+	// Track outbound clicks
 	const seamlinkTrack = function(e) {
-		e.preventDefault();  // Prevent immediate navigation
+		e.preventDefault();
 		const link = e.currentTarget;
 		const url = link.getAttribute('href');
-		
-		console.log('Link clicked:', url);
 		
 		fetch('/api/seamlink/track', {
 			method: 'POST',
@@ -39,10 +61,10 @@ func New(config ...SeamlinkConfig) fiber.Handler {
 				timestamp: new Date().toISOString()
 			})
 		}).then(() => {
-			window.open(url, '_blank');  // Open link after tracking
+			window.open(url, '_blank');
 		}).catch(error => {
 			console.error('Tracking error:', error);
-			window.open(url, '_blank');  // Open link anyway if tracking fails
+			window.open(url, '_blank');
 		});
 	};
 
@@ -60,28 +82,49 @@ func New(config ...SeamlinkConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		fmt.Println("Middleware called for path:", c.Path())
 
-		// Handle tracking endpoint
+		// Handle page visit tracking
+		if c.Path() == "/api/seamlink/pageview" {
+			fmt.Println("Received pageview request")
+
+			var visit PageVisit
+			if err := json.Unmarshal(c.Body(), &visit); err != nil {
+				fmt.Printf("Error parsing pageview data: %v\n", err)
+				return c.Status(400).SendString("Invalid pageview data")
+			}
+
+			fmt.Printf("Processing pageview: %+v\n", visit)
+
+			if err := cfg.StorePageVisit(visit); err != nil {
+				fmt.Printf("Error storing pageview: %v\n", err)
+				return c.Status(500).SendString("Failed to store pageview data")
+			}
+
+			fmt.Println("Successfully processed pageview")
+			return c.SendStatus(200)
+		}
+
+		// Handle click tracking
 		if c.Path() == "/api/seamlink/track" {
-			fmt.Println("Received tracking request")
+			fmt.Println("Received click tracking request")
 
 			var click SeamlinkClick
 			if err := json.Unmarshal(c.Body(), &click); err != nil {
-				fmt.Printf("Error parsing tracking data: %v\n", err)
-				return c.Status(400).SendString("Invalid tracking data")
+				fmt.Printf("Error parsing click data: %v\n", err)
+				return c.Status(400).SendString("Invalid click data")
 			}
 
 			fmt.Printf("Processing click: %+v\n", click)
 
 			if err := cfg.StoreLinkClick(click); err != nil {
 				fmt.Printf("Error storing click: %v\n", err)
-				return c.Status(500).SendString("Failed to store tracking data")
+				return c.Status(500).SendString("Failed to store click data")
 			}
 
 			fmt.Println("Successfully processed click")
 			return c.SendStatus(200)
 		}
 
-		// Process the response first
+		// Process the response
 		if err := c.Next(); err != nil {
 			return err
 		}
@@ -92,16 +135,12 @@ func New(config ...SeamlinkConfig) fiber.Handler {
 			return nil
 		}
 
-		// Get the response body
+		// Inject tracking script
 		body := string(c.Response().Body())
-
-		// Inject the script right before </body>
 		if strings.Contains(body, "</body>") {
 			fmt.Println("Injecting tracking script")
 			modified := strings.Replace(body, "</body>", trackingScript+"</body>", 1)
 			c.Response().SetBody([]byte(modified))
-		} else {
-			fmt.Println("No </body> tag found in response")
 		}
 
 		return nil
